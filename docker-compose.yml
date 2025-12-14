@@ -1,0 +1,221 @@
+version: "3.8"
+
+services:
+  # PostgreSQL Database
+  database:
+    image: postgres:15-alpine
+    container_name: packamal-db-dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./volumes/postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      - POSTGRES_DB=packamal_dev
+      - POSTGRES_USER=pakaremon
+      - POSTGRES_PASSWORD=dev_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pakaremon -d packamal_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - packamal-network
+
+  # Redis for Celery
+  redis:
+    image: redis:7-alpine
+    container_name: packamal-redis-dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - packamal-network
+
+  # Django Backend (API Server) - MULTI-THREADED with Gunicorn
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: packamal-backend-dev
+    # FIX: Use Gunicorn instead of runserver for multi-threading (4 workers = 4 concurrent requests)
+    # Access log format includes PID (process ID) to identify which worker handles each request
+    # Each worker process has a unique PID, so you can track which worker processed which request
+    # To view logs: docker-compose logs -f backend
+    # Log format: [PID:xxxxx] IP - - [timestamp] "METHOD /path HTTP/1.1" STATUS SIZE "REFERER" "USER_AGENT" TIME_MS
+    command: gunicorn packamal.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2 --timeout 300 --access-logfile /app/package_analysis/logs/gunicorn-access.log --error-logfile /app/package_analysis/logs/gunicorn-error.log --access-logformat "[Worker PID:%(p)s] %(h)s %(l)s %(u)s %(t)s \"%(r)s\" %(s)s %(b)s \"%(f)s\" \"%(a)s\" %(D)s"
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./backend:/app
+      - ./volumes/media:/app/media
+      - ./volumes/static:/app/staticfiles
+      - ./volumes/logs:/app/package_analysis/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+      # - ../scripts:/scripts
+
+    environment:
+      - DEBUG=True
+      - POSTGRES_DB=packamal_dev
+      - POSTGRES_USER=pakaremon
+      - POSTGRES_PASSWORD=dev_password
+      - POSTGRES_HOST=database
+      - POSTGRES_PORT=5432
+      - ALLOWED_HOSTS=localhost,127.0.0.1,backend,178.128.130.192,138.68.244.242
+      - SECRET_KEY=dev-secret-key-change-in-production
+      # Celery settings
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CONTAINER_DIR_OVERRIDE=/tmp/container-lib
+      - RESULTS_VOLUME=analysis_results
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - packamal-network
+
+  # Celery Worker 1 - ANALYSIS QUEUE (Single worker for single-container execution)
+  # CRITICAL: Only ONE worker processes the 'analysis' queue to ensure only one container runs at a time
+  celery_worker_1:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: packamal-celery-worker-1
+    command: celery -A packamal worker -l info -n worker1@%h -Q analysis --concurrency=1
+    volumes:
+      - ./backend:/app
+      - ./volumes/logs:/app/package_analysis/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+      - analysis-results:/tmp/analysis-results
+      - ../scripts:/scripts
+    environment:
+      - DEBUG=True
+      - POSTGRES_DB=packamal_dev
+      - POSTGRES_USER=pakaremon
+      - POSTGRES_PASSWORD=dev_password
+      - POSTGRES_HOST=database
+      - POSTGRES_PORT=5432
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CONTAINER_DIR_OVERRIDE=/tmp/container-lib
+    depends_on:
+      - redis
+      - database
+    restart: unless-stopped
+    networks:
+      - packamal-network
+
+  # Celery Worker 2 - MAINTENANCE QUEUE (For cleanup and other background tasks)
+  celery_worker_2:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: packamal-celery-worker-2
+    command: celery -A packamal worker -l info -n worker2@%h -Q maintenance,celery
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - analysis-results:/tmp/analysis-results
+      - ../scripts:/scripts
+    environment:
+      - DEBUG=True
+      - POSTGRES_DB=packamal_dev
+      - POSTGRES_USER=pakaremon
+      - POSTGRES_PASSWORD=dev_password
+      - POSTGRES_HOST=database
+      - POSTGRES_PORT=5432
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CONTAINER_DIR_OVERRIDE=/tmp/container-lib
+    depends_on:
+      - redis
+      - database
+    restart: unless-stopped
+    networks:
+      - packamal-network
+
+  # Celery Beat - Periodic Task Scheduler
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: packamal-celery-beat
+    command: celery -A packamal beat -l info
+    volumes:
+      - ./backend:/app
+    environment:
+      - DEBUG=True
+      - POSTGRES_DB=packamal_dev
+      - POSTGRES_USER=pakaremon
+      - POSTGRES_PASSWORD=dev_password
+      - POSTGRES_HOST=database
+      - POSTGRES_PORT=5432
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CONTAINER_DIR_OVERRIDE=/tmp/container-lib
+    depends_on:
+      - redis
+      - database
+    restart: unless-stopped
+    networks:
+      - packamal-network
+
+  # Celery Flower (Monitoring Dashboard)
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: packamal-flower-dev
+    entrypoint: '/bin/bash -c "sed -i ''s/\r$$//'' /app/start-flower.sh && bash /app/start-flower.sh"'
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CONTAINER_DIR_OVERRIDE=/tmp/container-lib
+    volumes:
+      - ./backend:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - packamal-network
+
+  # Frontend (Nginx)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: packamal-frontend-dev
+    ports:
+      - "8080:80"
+    volumes:
+      - ./volumes/static:/usr/share/nginx/html/static:ro
+      - ./volumes/media:/usr/share/nginx/html/media:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - packamal-network
+
+networks:
+  packamal-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  analysis-results:

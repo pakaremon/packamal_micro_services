@@ -1,0 +1,29 @@
+Django>=5.1
+gunicorn>=23.0
+psycopg2-binary>=2.9
+requests>=2.32
+beautifulsoup4>=4.13
+lxml>=5.4
+PyYAML>=6.0
+Pygments>=2.19
+validators>=0.34
+fuzzywuzzy>=0.18
+python-Levenshtein>=0.27
+GitPython>=3.1
+numpy
+six
+yara-python
+django_distill
+bandit
+pytest
+
+# Celery and async task processing
+celery[redis]
+redis
+flower
+django-celery-results
+django-celery-beat
+
+# Docker SDK
+docker>=7.0
+
