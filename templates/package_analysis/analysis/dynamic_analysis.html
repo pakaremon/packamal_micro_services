@@ -1,0 +1,285 @@
+{% extends "package_analysis/homepage/homepage_layout.html" %}
+{% block body%}
+<header class="hero-section text-white text-center py-1">
+    <div class="container">
+        <!-- color white -->
+        <h1 style="color: black;">Dynamic Analysis</h1>
+    </div>
+</header>
+
+<style>
+    .btn.active {
+        background-color: #007bff;
+        /* Primary color */
+        color: white;
+        border: 2px solid #0056b3;
+        /* Darker border for emphasis */
+    }
+
+    .btn:not(.active) {
+        background-color: #f8f9fa;
+        /* Light gray for inactive */
+        color: #6c757d;
+        /* Muted text color */
+    }
+
+
+    .card {
+        border-radius: 8px;
+    }
+
+    .card-header {
+        font-weight: bold;
+    }
+
+    .btn-outline-primary {
+        font-size: 0.9rem;
+    }
+</style>
+
+<script>
+
+    function showUploadForm() {
+        const form = document.getElementById('dynamicForm');
+        form.setAttribute('action', "{% url 'upload_sample' %}");
+        document.getElementById('fileInputContainer').classList.remove('d-none');
+        document.getElementById('fileInput').setAttribute('required', 'required'); // Add required
+
+        document.getElementById('uploadTab').classList.add('active');
+        document.getElementById('submitTab').classList.remove('active');
+    }
+
+    function showSubmitForm() {
+        const form = document.getElementById('dynamicForm');
+        form.setAttribute('action', "{% url 'dynamic_analysis' %}");
+        document.getElementById('fileInputContainer').classList.add('d-none');
+        document.getElementById('fileInput').removeAttribute('required'); // Remove required
+
+        document.getElementById('uploadTab').classList.remove('active');
+        document.getElementById('submitTab').classList.add('active');
+    }
+
+
+</script>
+
+<!-- Upload and submit tab, click one  -->
+
+<div class="container my-5">
+
+    <div class="text-center mb-4">
+        <button id="submitTab" class="btn btn-secondary mx-2" onclick="showSubmitForm()"
+            title="Submit a package for analysis">Submit package</button>
+        <button id="uploadTab" class="btn btn-secondary mx-2 active" onclick="showUploadForm()"
+            title="Upload a package for analysis">Upload package</button>
+    </div>
+
+</div>
+
+<!-- Upload Form -->
+
+
+<section class="bg-white shadow rounded-lg p-4 mx-auto" style="max-width: 600px;">
+    <form id="dynamicForm" method="post" enctype="multipart/form-data"
+        onsubmit="event.preventDefault(); submitDynamicAnalysisForm();" action="{% url 'upload_sample' %}">
+        {% csrf_token %}
+        <div class="form-group">
+            {{ form.ecosystem.label_tag }}
+            {{ form.ecosystem }}
+        </div>
+        <div class="form-group">
+            {{ form.package_name.label_tag }}
+            {{ form.package_name }}
+        </div>
+        <div class="form-group">
+            <div class="suggestions" id="suggestions"></div>
+            {{ form.package_version.label_tag }}
+            {{ form.package_version }}
+            <div class="version-suggestions" id="version-suggestions">
+            </div>
+            <br>
+            <div id="fileInputContainer">
+                <label for="file">Choose file to upload:</label>
+                <input type="file" id="fileInput" name="file" required>
+            </div>
+            <br><br>
+            <div class="text-center">
+                <button type="submit" class="btn btn-primary active">
+                    Submit
+                </button>
+            </div>
+    </form>
+</section>
+<!-- Loader -->
+<div id="loader"
+    class="position-fixed w-100 h-100 top-0 start-0 bg-dark bg-opacity-50 d-flex align-items-center justify-content-center z-50 d-none">
+    <div class="spinner"></div>
+</div>
+
+
+<!-- Analysis Feedback Panel -->
+<div id="feedback-panel" class="container mt-4 d-none">
+    <!-- Yara Section  -->
+    <div class="card mb-3" style="border-left: 5px solid rgb(103, 120, 103);">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Yara Analysis</h5>
+            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#yara-table"
+                aria-expanded="false" aria-controls="yara-table">
+                Toggle
+            </button>
+        </div>
+        <div id="yara-table" class="collapse">
+            <div class="card-body">
+                <table class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Rule</th>
+                            <th>Category</th>
+                            <th>Description</th>
+                            <th>Severity</th>
+                            <th>Evidence</th>
+                            <th>Rule URL</th>
+                        </tr>
+                    </thead>
+                    <tbody id="yara-content">
+                        <!-- Dynamic content will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Files Section -->
+    <div class="card mb-3" style="border-left: 5px solid lightgreen;">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Files</h5>
+            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#files-table"
+                aria-expanded="false" aria-controls="files-table">
+                Toggle
+            </button>
+        </div>
+        <div id="files-table" class="collapse">
+            <div class="card-body">
+                <table class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Path</th>
+                        </tr>
+                    </thead>
+                    <tbody id="files-content">
+                        <!-- Dynamic content will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- DNS Section -->
+    <div class="card mb-3" style="border-left: 5px solid lightblue;">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">DNS Queries</h5>
+            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#dns-table"
+                aria-expanded="false" aria-controls="dns-table">
+                Toggle
+            </button>
+        </div>
+        <div id="dns-table" class="collapse">
+            <div class="card-body">
+                <table class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Hostname</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dns-content">
+                        <!-- Dynamic content will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- IP Section -->
+    <div class="card mb-3" style="border-left: 5px solid lightcoral;">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">IP Connections</h5>
+            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#ip-table"
+                aria-expanded="false" aria-controls="ip-table">
+                Toggle
+            </button>
+        </div>
+        <div id="ip-table" class="collapse">
+            <div class="card-body">
+                <table class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Address</th>
+                            <th>Port</th>
+                            <th>Hostname</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ip-content">
+                        <!-- Dynamic content will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Commands Section -->
+    <div class="card mb-3" style="border-left: 5px solid lightyellow;">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Executed Commands</h5>
+            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#commands-table"
+                aria-expanded="false" aria-controls="commands-table">
+                Toggle
+            </button>
+        </div>
+        <div id="commands-table" class="collapse">
+            <div class="card-body">
+                <table class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Command</th>
+                        </tr>
+                    </thead>
+                    <tbody id="commands-content">
+                        <!-- Dynamic content will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!--Syscalls Section -->
+    <div class="card mb-3" style="border-left: 5px solid lightgray;">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">System Calls</h5>
+            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#syscalls-table"
+                aria-expanded="false" aria-controls="syscalls-table">
+                Toggle
+            </button>
+        </div>
+        <div id="syscalls-table" class="collapse">
+            <div class="card-body">
+                <table class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>System Call</th>
+                        </tr>
+                    </thead>
+                    <tbody id="syscalls-content">
+                        <!-- Dynamic content will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
